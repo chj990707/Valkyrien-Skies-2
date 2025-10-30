@@ -27,7 +27,7 @@ public class EntityVisualizerDecorator<T extends Entity> implements EntityVisual
         if(VSGameUtilsKt.getShipManaging(entity) instanceof ClientShip ship){
             VisualEmbedding embedding = ShipEmbeddingManager.INSTANCE.getOrCreateEmbedding(ship, ctx);
             EntityVisual<? super T> visual = inner.createVisual(embedding, entity, partialTick);
-            ShipEmbeddingManager.INSTANCE.registerEntity(entity, ship);
+            ShipEmbeddingManager.INSTANCE.registerVisual(visual, ship);
             return visual;
         }
         else return inner.createVisual(ctx, entity, partialTick);
