@@ -1,6 +1,13 @@
 package org.valkyrienskies.mod.compat.flywheel;
 
 import dev.engine_room.flywheel.api.visual.Visual;
+import dev.engine_room.flywheel.api.visualization.VisualizationManager;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import org.valkyrienskies.core.api.ships.Ship;
 import org.valkyrienskies.core.impl.hooks.VSEvents.ShipUnloadEventClient;
 import dev.engine_room.flywheel.api.visualization.VisualEmbedding;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
@@ -13,6 +20,7 @@ import org.joml.Quaternionf;
 import org.joml.Vector3d;
 import org.joml.Vector3f;
 import org.valkyrienskies.core.api.ships.ClientShip;
+import org.valkyrienskies.mod.common.VSGameUtilsKt;
 import org.valkyrienskies.mod.common.hooks.VSGameEvents;
 import org.valkyrienskies.mod.common.util.VectorConversionsMCKt;
 
@@ -34,7 +42,13 @@ public class ShipEmbeddingManager {
 
     protected static ConcurrentHashMap<ClientShip, VisualEmbedding> vs$shipEmbedding = new ConcurrentHashMap<>();
 
-    protected static ConcurrentHashMap<Visual, ClientShip> vs$shipVisuals = new ConcurrentHashMap<>();
+    protected static ConcurrentHashMap<Visual, Ship> vs$shipVisuals = new ConcurrentHashMap<>();
+
+    protected static ConcurrentHashMap<Visual, BlockEntity> vs$shipBlockEntityVisuals = new ConcurrentHashMap<>();
+
+    protected static ConcurrentHashMap<Visual, Entity> vs$shipEntityVisuals = new ConcurrentHashMap<>();
+
+    protected static ConcurrentLinkedQueue<Entity> vs$shipEntityQueue = new ConcurrentLinkedQueue<>();
 
     private ShipEmbeddingManager(){
         ShipUnloadEventClient.Companion.on(event -> this.unloadShip(event.getShip()));
@@ -55,6 +69,8 @@ public class ShipEmbeddingManager {
         vs$shipVisuals.entrySet().removeIf(
             entry -> {
                 if (entry.getValue() == ship){
+                    vs$shipBlockEntityVisuals.remove(entry.getKey());
+                    vs$shipEntityVisuals.remove(entry.getKey());
                     entry.getKey().delete();
                     return true;
                 } else return false;
@@ -85,6 +101,32 @@ public class ShipEmbeddingManager {
             final Vec3i origin = vs$EmbeddingOrigin.get(ship);
             setEmbeddingTransform(embedding, ship, anchor, origin);
         }
+        final VisualizationManager visualizationManager = VisualizationManager.get(Minecraft.getInstance().level);
+        if (visualizationManager == null) return;
+        vs$shipBlockEntityVisuals.entrySet().removeIf(
+            entry -> {
+                BlockEntity be = entry.getValue();
+                final BlockPos pos = be.getBlockPos();
+                final ChunkPos chunkPos = be.getLevel().getChunkAt(pos).getPos();
+                Ship ship = VSGameUtilsKt.getShipManagingPos(be.getLevel(), pos);
+                if (ship == null || !ship.getActiveChunksSet().contains(chunkPos.x, chunkPos.z)) {
+                    vs$shipVisuals.remove(entry.getKey());
+                    entry.getKey().delete();
+                    return true;
+                }
+                return false;
+            }
+        );
+        vs$shipEntityQueue.removeIf( entity -> {
+            if(VSGameUtilsKt.getShipManaging(entity) != null){
+                final VisualizationManager manager = VisualizationManager.get(entity.level());
+                if(manager != null) {
+                    manager.entities().queueAdd(entity);
+                    return true;
+                }
+            }
+            return false;
+        });
     }
     /**
      * Removes ship from the storage.
@@ -100,6 +142,8 @@ public class ShipEmbeddingManager {
         vs$shipVisuals.entrySet().removeIf(
             entry -> {
                 if (entry.getValue() == ship) {
+                    vs$shipBlockEntityVisuals.remove(entry.getKey());
+                    vs$shipEntityVisuals.remove(entry.getKey());
                     entry.getKey().delete();
                     return true;
                 } else return false;
@@ -127,6 +171,8 @@ public class ShipEmbeddingManager {
                 embedding.delete();
             }
         );
+        vs$shipEntityVisuals.clear();
+        vs$shipBlockEntityVisuals.clear();
         vs$shipVisuals.clear();
         vs$shipEmbedding.clear();
         vs$shipAnchor.clear();
@@ -157,7 +203,27 @@ public class ShipEmbeddingManager {
         embedding.transforms(poseMatrix, normalMatrix);
     }
 
-    public void registerVisual(Visual visual, ClientShip ship) {
+    public void registerVisual(Visual visual, Entity entity) {
+        final Ship ship = VSGameUtilsKt.getShipManaging(entity);
+        if(ship == null) return;
         vs$shipVisuals.put(visual, ship);
+        vs$shipEntityVisuals.put(visual, entity);
+    }
+
+    public void registerVisual(Visual visual, BlockEntity blockEntity) {
+        final Ship ship = VSGameUtilsKt.getShipManagingPos(blockEntity.getLevel(), blockEntity.getBlockPos());
+        if(ship == null) return;
+        vs$shipVisuals.put(visual, ship);
+        vs$shipBlockEntityVisuals.put(visual, blockEntity);
+    }
+
+    /**
+     * For some unknown reason entity might be loaded earlier than ship in rare occasion. This method will enqueue such entities in shipyard for rebuilding until the ship is loaded.
+     * @param entity Entity that is loaded in the shipyard but the ship isn't loaded yet.
+     * TODO: Fix the actual load order.
+     */
+    public void enqueueForShipLoad(Entity entity) {
+        if(!VSGameUtilsKt.isBlockInShipyard(entity.level(), entity.blockPosition())) return;
+        vs$shipEntityQueue.add(entity);
     }
 }
