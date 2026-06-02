@@ -327,6 +327,21 @@ public class VsWorldFromShipLightStorage {
     }
 
     /**
+     * Copies data of a section to an array.
+     *  TODO: find more stable way to implement this.
+     * @param section Section position as long
+     * @return the address of the copied data
+     */
+    public long copySectionLight(long section) {
+        int existing = section2Index.get(section);
+        if (existing == INVALID) return MemoryUtil.NULL;
+        long ptr = MemoryUtil.nmemAlloc(SECTION_SIZE_BYTES);
+        if (ptr == MemoryUtil.NULL) return MemoryUtil.NULL;
+        MemoryUtil.memCopy(arenaPtr + (long) existing * SECTION_SIZE_BYTES, ptr, SECTION_SIZE_BYTES);
+        return ptr;
+    }
+
+    /**
      * Trilinear-splat one ship voxel's occluder strength across the (up to)
      * 8 world cells it overlaps. The voxel center is at world
      * {@code (cwx, cwy, cwz)} (float) and occupies {@code [c-0.5, c+0.5]^3};
