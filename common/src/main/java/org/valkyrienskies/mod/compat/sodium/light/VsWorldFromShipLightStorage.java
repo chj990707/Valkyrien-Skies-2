@@ -13,6 +13,7 @@ import java.nio.IntBuffer;
 import java.util.BitSet;
 
 import java.util.Set;
+import net.minecraft.core.BlockPos.MutableBlockPos;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL15;
@@ -138,6 +139,14 @@ public class VsWorldFromShipLightStorage {
         requestedThisFrame.clear();
     }
 
+    public void populateSolidBitsFromWorld(LevelAccessor level) {
+        LongSet sections = section2Index.keySet();
+        for (long sectionPos : sections) {
+            int idx = section2Index.get(sectionPos);
+            if (!changed.get(idx)) continue;
+            setSolidFromWorld(sectionPos, level, arenaPtr + (long) idx * SECTION_SIZE_BYTES);
+        }
+    }
     /**
      * Walk every block in {@code ship}'s shipyard-space AABB, transform each one
      * to world coordinates via the ship's render transform, and write its solid
@@ -294,9 +303,11 @@ public class VsWorldFromShipLightStorage {
                 }
             }
         }
+    }
 
-        // Pass 2: dilate every emitter from this ship through the now-complete
-        // solid bitmap of the same ship. (Solids written by ships processed
+    public void spreadLight() {
+        // Pass 2: dilate every emitter through the now-complete
+        // solid bitmap. (Solids written by ships processed
         // earlier this frame are also visible — we emit through the merged
         // solid grid.) Each emitter does a vanilla-style BFS that decrements
         // 1 per step and skips solid cells.
@@ -543,6 +554,28 @@ public class VsWorldFromShipLightStorage {
             }
         }
         return section2Index.get(sectionPos);
+    }
+
+    private void setSolidFromWorld(long sectionPos, LevelAccessor level, long ptr) {
+        BlockPos origin = SectionPos.of(sectionPos).origin();
+        MutableBlockPos currentPos = new MutableBlockPos(origin.getX() - 1 , origin.getY() - 1, origin.getZ() - 1);
+        for (int iy = -1; iy < 17; iy++) {
+            currentPos.setY(origin.getY() + iy);
+            for (int iz = -1; iz < 17; iz++) {
+                currentPos.setZ(origin.getZ() + iz);
+                for (int ix = -1; ix < 17; ix++) {
+                    currentPos.setX(origin.getX() + ix);
+                    int voxelIdx = (ix + 1) + (iz + 1) * 18 + (iy + 1) * 18 * 18;
+                    origin.offset(ix, iy, iz);
+                    BlockState state = level.getBlockState(currentPos);
+                    if (state.canOcclude() && Block.isShapeFullBlock(state.getOcclusionShape(level, currentPos))) {
+                        long solidWordPtr = ptr + SOLID_START_BYTES + (long)(voxelIdx >>> 5) * 4L;
+                        int solidBits = MemoryUtil.memGetInt(solidWordPtr);
+                        MemoryUtil.memPutInt(solidWordPtr, solidBits | (1 << (voxelIdx & 31)));
+                    }
+                }
+            }
+        }
     }
 
     /** Release any sections that no ship populated this frame. */

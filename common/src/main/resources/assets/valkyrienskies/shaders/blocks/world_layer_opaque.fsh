@@ -39,6 +39,8 @@ uniform ivec3 u_VsRenderOrigin;
 // The quaternion's inverse rotates the world-frame fragment-to-emitter
 // offset into the emitter's owning ship local frame, so the Manhattan
 // light bubble visibly rotates with the hull.
+uniform usamplerBuffer u_VsShipLightSections;
+uniform usamplerBuffer u_VsShipLightLut;
 uniform samplerBuffer u_VsShipEmitters;
 uniform int u_VsShipEmitterCount;
 
@@ -138,6 +140,65 @@ const int VA_MASK_TEX_WIDTH_MASK = (1 << VA_MASK_TEX_WIDTH_SHIFT) - 1;
 const int VA_SUB = 8;
 const int VA_OCC_WORDS_PER_VOXEL = 16;
 const float VA_WORLD_SAMPLE_EPS = 0.0001;
+
+const uint VS_BLOCKS_PER_SECTION = 18u * 18u * 18u;
+const uint VS_LIGHT_SIZE_BYTES = VS_BLOCKS_PER_SECTION;
+const uint VS_SOLID_SIZE_BYTES = ((VS_BLOCKS_PER_SECTION + 31u) / 32u) * 4u;
+const uint VS_SOLID_START_INTS = 0u;
+const uint VS_LIGHT_START_INTS = VS_SOLID_SIZE_BYTES / 4u;
+const uint VS_SECTION_SIZE_INTS = (VS_SOLID_SIZE_BYTES + VS_LIGHT_SIZE_BYTES) / 4u;
+
+const uint VS_COMPLETELY_SOLID = 0x7FFFFFFu;
+const float VS_EPSILON = 1e-5;
+const uint VS_LOWER_10_BITS = 0x3FFu;
+const uint VS_UPPER_10_BITS = 0xFFF00000u;
+const float VS_LIGHT_NORMALIZER = 1.0 / 16.0;
+
+uint vs_indexShipToWorldLut(uint i) { return texelFetch(u_VsShipLightLut, int(i)).r; }
+uint vs_indexShipToWorldLight(uint i) { return texelFetch(u_VsShipLightSections, int(i)).r; }
+
+bool vs_shipToWorld_nextLut(uint base, int coord, out uint next) {
+    int start = int(vs_indexShipToWorldLut(base));
+    uint size = vs_indexShipToWorldLut(base + 1u);
+    int idx = coord - start;
+    if (idx < 0 || idx >= int(size)) return true;
+    next = vs_indexShipToWorldLut(base + 2u + uint(idx));
+    return false;
+}
+
+bool vs_shipToWorld_chunkCoordToSectionIndex(ivec3 sectionPos, out uint index) {
+    uint first;
+    if (vs_shipToWorld_nextLut(0u, sectionPos.y, first) || first == 0u) return true;
+    uint second;
+    if (vs_shipToWorld_nextLut(first, sectionPos.x, second) || second == 0u) return true;
+    uint sectionIndex;
+    if (vs_shipToWorld_nextLut(second, sectionPos.z, sectionIndex) || sectionIndex == 0u) return true;
+    index = sectionIndex - 1u;
+    return false;
+}
+
+uvec2 vs_shipToWorld_LightAt(uint sectionOffset, uvec3 blockInSectionPos) {
+    uint byteOffset = blockInSectionPos.x + blockInSectionPos.z * 18u + blockInSectionPos.y * 18u * 18u;
+    uint uintOffset = byteOffset >> 2u;
+    uint bitOffset = (byteOffset & 3u) << 3u;
+    uint raw = vs_indexShipToWorldLight(sectionOffset + VS_LIGHT_START_INTS + uintOffset);
+    uint b = (raw >> bitOffset) & 0xFu;
+    uint s = (raw >> (bitOffset + 4u)) & 0xFu;
+    return uvec2(b, s);
+}
+
+bool vs_shipToWorld_Light(vec3 worldPos, out vec2 light) {
+    ivec3 blockPos = ivec3(floor(worldPos));
+    uint sectionIndex;
+    if (vs_shipToWorld_chunkCoordToSectionIndex(blockPos >> 4, sectionIndex)) {
+        return false;
+    }
+    uint sectionOffset = sectionIndex * VS_SECTION_SIZE_INTS;
+    ivec3 blockInSectionPos = (blockPos & 0xF) + 1;
+    uvec2 raw = vs_shipToWorld_LightAt(sectionOffset, uvec3(blockInSectionPos));
+    light = clamp(vec2(raw) * VS_LIGHT_NORMALIZER, WS_UV_MIN, WS_UV_MAX);
+    return true;
+}
 
 bool va_isFluidUv(vec2 uv) {
     return texture(ValkyrienAir_FluidMask, uv).r > 0.5;
@@ -351,11 +412,13 @@ void main() {
 
     // Ship emitters: max-merge their distance-attenuated contribution into the
     // block-light UV. Sub-block-precise because the emitter coords are floats.
-    float shipLight = vs_shipEmitterLight(worldPos);
-    if (shipLight > 0.0) {
+    vec2 shipLight;
+    if (vs_shipToWorld_Light(worldPos, shipLight)) {
         // MC packs block-light at U = (lightLevel + 0.5) / 16.
-        float shipLightUv = (shipLight + 0.5) / 16.0;
-        lightCoord.x = max(lightCoord.x, shipLightUv);
+        lightCoord = vec2(
+            max(shipLight.x, lightCoord.x),
+            lightCoord.y
+        );
     }
 
     vec4 lightSample = texture(u_LightTex, clamp(lightCoord, vec2(WS_UV_MIN), vec2(WS_UV_MAX)));

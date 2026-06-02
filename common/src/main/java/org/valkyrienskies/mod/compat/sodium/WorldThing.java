@@ -17,8 +17,8 @@ import org.valkyrienskies.mod.compat.sodium.light.GlUniformInt3v;
 public class WorldThing extends ChunkShaderInterface {
     private final GlUniformInt3v uniformRenderOrigin;
     private final GlUniformFloat3v uniformCameraFrac;
-    private final GlUniformInt uniformShipEmitters;
-    private final GlUniformInt uniformShipEmitterCount;
+    private final GlUniformInt uniformShipLightSections;
+    private final GlUniformInt uniformShipLightLut;
     private final GlUniformInt uniformShipOccluders;
     private final GlUniformInt uniformShipOccluderCount;
 
@@ -26,8 +26,8 @@ public class WorldThing extends ChunkShaderInterface {
         super(context, options);
         this.uniformRenderOrigin = context.bindUniform("u_VsRenderOrigin", GlUniformInt3v::new);
         this.uniformCameraFrac = context.bindUniform("u_VsCameraFrac", GlUniformFloat3v::new);
-        this.uniformShipEmitters = context.bindUniform("u_VsShipEmitters", GlUniformInt::new);
-        this.uniformShipEmitterCount = context.bindUniform("u_VsShipEmitterCount", GlUniformInt::new);
+        this.uniformShipLightSections = context.bindUniform("u_VsShipLightSections", GlUniformInt::new);
+        this.uniformShipLightLut = context.bindUniform("u_VsShipLightLut", GlUniformInt::new);
         this.uniformShipOccluders = context.bindUniform("u_VsShipOccluders", GlUniformInt::new);
         this.uniformShipOccluderCount = context.bindUniform("u_VsShipOccluderCount", GlUniformInt::new);
     }
@@ -40,9 +40,9 @@ public class WorldThing extends ChunkShaderInterface {
         this.uniformCameraFrac.set(fx, fy, fz);
     }
 
-    public void setShipEmitters(int textureUnit, int count) {
-        this.uniformShipEmitters.setInt(textureUnit);
-        this.uniformShipEmitterCount.setInt(count);
+    public void setShipLights(int sections, int lut) {
+        this.uniformShipLightSections.setInt(sections);
+        this.uniformShipLightLut.setInt(lut);
     }
 
     public void setShipOccluders(int textureUnit, int count) {

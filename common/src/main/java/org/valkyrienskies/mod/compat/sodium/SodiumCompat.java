@@ -202,6 +202,8 @@ public class SodiumCompat {
             if (!isShipRelevantToWorldFromShipFrame(cs, viewport)) return;
             storage.populateFromShip(level, cs, emitters, occluders);
         });
+        storage.populateSolidBitsFromWorld(level);
+        storage.spreadLight();
         storage.pruneUnused();
         storage.upload();
         emitters.upload();
@@ -563,8 +565,8 @@ public class SodiumCompat {
                 (float) (cameraPos.x - ox),
                 (float) (cameraPos.y - oy),
                 (float) (cameraPos.z - oz));
-        wt.setShipEmitters(SHIP_EMITTER_LIST_TEXTURE_UNIT, getShipEmitterList().size());
         wt.setShipOccluders(SHIP_OCCLUDER_LIST_TEXTURE_UNIT, getShipOccluderList().size());
+        wt.setShipLights(WORLD_FROM_SHIP_SECTIONS_TEXTURE_UNIT, WORLD_FROM_SHIP_LUT_TEXTURE_UNIT);
     }
 
     private static GlProgram<WorldThing> createWorldShader(String path, ChunkShaderOptions options) {
