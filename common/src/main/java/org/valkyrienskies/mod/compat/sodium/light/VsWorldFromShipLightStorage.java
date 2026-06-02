@@ -474,29 +474,21 @@ public class VsWorldFromShipLightStorage {
             int l = bfsL.getInt(head);
             head++;
 
-            int idx = ensureSection(SectionPos.asLong(x >> 4, y >> 4, z >> 4));
-            int ix = (x & 15) + 1;
-            int iy = (y & 15) + 1;
-            int iz = (z & 15) + 1;
-            int voxelIdx = ix + iz * 18 + iy * 18 * 18;
-            long secPtr = arenaPtr + (long) idx * SECTION_SIZE_BYTES;
+            boolean isStopped = false;
 
-            // Solid voxels (ship walls) block light propagation. We let the
-            // emitter cell itself ignore the solid check: the emitter's host
-            // block can be a torch (non-solid) or a glowstone (solid) — for
-            // the host cell we still write, but we don't propagate further if
-            // it's solid.
-            long solidWordPtr = secPtr + SOLID_START_BYTES + (long)(voxelIdx >>> 5) * 4L;
-            int solidWord = MemoryUtil.memGetInt(solidWordPtr);
-            boolean isSolid = (solidWord & (1 << (voxelIdx & 31))) != 0;
+            // Propagate to sections up to 1 blocks away because of the border cells in the storage
+            LongSet sectionsAround = new LongOpenHashSet();
+            SectionPos.aroundAndAtBlockPos(x, y, z, sectionsAround::add);
 
-            long lightBytePtr = secPtr + LIGHT_START_BYTES + voxelIdx;
-            byte existing = MemoryUtil.memGetByte(lightBytePtr);
-            int curLight = existing & 0xF;
-            if (curLight >= l) continue;
-            MemoryUtil.memPutByte(lightBytePtr, (byte) ((existing & 0xF0) | (l & 0xF)));
-
-            if (isSolid) continue; // host cell got the value, but no propagation through solid
+            for (long sectionPos : sectionsAround) {
+                BlockPos adjOrigin = SectionPos.of(sectionPos).origin();
+                int ix = x - adjOrigin.getX() + 1;
+                int iy = y - adjOrigin.getY() + 1;
+                int iz = z - adjOrigin.getZ() + 1;
+                int voxelIdx = ix + iz * 18 + iy * 18 * 18;
+                isStopped = writeDataAt(sectionPos, voxelIdx, l) || isStopped;
+            }
+            if (isStopped) continue;
 
             int nl = l - 1;
             if (nl <= 0) continue;
@@ -507,6 +499,27 @@ public class VsWorldFromShipLightStorage {
             bfsX.add(x); bfsY.add(y); bfsZ.add(z + 1); bfsL.add(nl);
             bfsX.add(x); bfsY.add(y); bfsZ.add(z - 1); bfsL.add(nl);
         }
+    }
+
+    private boolean writeDataAt(long section, int voxelIdx, int l) {
+        int idx = ensureSection(section);
+        long secPtr = arenaPtr + (long) idx * SECTION_SIZE_BYTES;
+
+        // Solid voxels (ship walls) block light propagation. We let the
+        // emitter cell itself ignore the solid check: the emitter's host
+        // block can be a torch (non-solid) or a glowstone (solid) — for
+        // the host cell we still write, but we don't propagate further if
+        // it's solid.
+        long solidWordPtr = secPtr + SOLID_START_BYTES + (long)(voxelIdx >>> 5) * 4L;
+        int solidWord = MemoryUtil.memGetInt(solidWordPtr);
+        boolean isSolid = (solidWord & (1 << (voxelIdx & 31))) != 0;
+
+        long lightBytePtr = secPtr + LIGHT_START_BYTES + voxelIdx;
+        byte existing = MemoryUtil.memGetByte(lightBytePtr);
+        int curLight = existing & 0xF;
+        if (curLight >= l) return true;
+        MemoryUtil.memPutByte(lightBytePtr, (byte) ((existing & 0xF0) | (l & 0xF)));
+        return isSolid; // host cell got the value, but no propagation through solid
     }
 
     /** Allocate or reuse a section for {@code sectionPos}, zeroing it on first
